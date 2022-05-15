@@ -27,30 +27,31 @@ def calculate_compute_time():
 
 #assume perfect reuse
 def DRAM_move_time():
-    total_bytes_move = data_size*( B*(Ni + Nn) + Ni*Nn)
+    total_bytes_move = data_size*( B*(Ni + Nn) + B*Ni*Nn)
     return total_bytes_move/VRAM_BW
 
 #assume perfect reuse
 def L2_move_time():
-    total_bytes_move = 3200*data_size*( B*(Ni + Nn) + Ni*Nn)
+    total_bytes_move = data_size*( B*(Ni + Nn) + B*Ni*Nn)
     return total_bytes_move/L2_BW
 
 #assume perfect reuse
 def L1_move_time():
     if(Blocks < SM_COUNT):
-        total_bytes_move = 3200*data_size*( B*(Ni + Nn) / Blocks + Ni*Nn )
+        total_bytes_move = data_size*( B*(Ni + Nn) / Blocks + B*Ni*Nn )
     else:
-        total_bytes_move = 3200*data_size*( B*(Ni + Nn) / SM_COUNT * math.ceil(Blocks / SM_COUNT) + Ni*Nn)
+        total_bytes_move = data_size*( B*(Ni + Nn) / SM_COUNT * math.ceil(Blocks / SM_COUNT) + B*Ni*Nn)
     return total_bytes_move/L2_BW
 
-def effective_compute(op_intensity):
-    dram_compute = op_intensity
+def effective_compute():
+    op_intensity = 2*Ni*Nn*B/(data_size*( B*(Ni + Nn) + B*Ni*Nn))
+    print(op_intensity)
+    dram_compute = op_intensity*VRAM_BW
     if (dram_compute < FP32_MAX):
         FLOPS_EFF = dram_compute
     else:
         FLOPS_EFF = FP32_MAX
-
-
+    print(FLOPS_EFF)
 
 def set_size(N_i, N_n, batch, block_num):
     global Ni, Nn, B, Blocks
@@ -67,7 +68,7 @@ def main():
     Blocks = 2 ** 7 #2 ^ 7 = 128, optimal when testing large problem sizes
 
     set_size(Ni, Nn, B, Blocks)
-
+    effective_compute()
     times = [calculate_compute_time(), DRAM_move_time(), L2_move_time(), L1_move_time()]
     time_label = ["compute time", "DRAM bandwidth", "L2 bandwidth", "L1 bandwidth"]
 
