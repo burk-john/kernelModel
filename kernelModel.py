@@ -2,6 +2,7 @@ import math
 
 # Titan V hardware characteristics
 FP32_MAX = 13.8 * 10e12 # 13.8TFLOPs max
+FLOPS_EFF = 0
 
 TOTAL_VRAM = 12884901888 # 12GB to bytes
 TOTAL_L2 = 4718592 # 4.5MB
@@ -19,27 +20,59 @@ GPU_CLK_BOOST = 1455000000 # boost clock speed
 
 data_size = 4 # FP32, 32 bits, 8bits/byte
 
+# assumes compute bound ONLY
 def calculate_compute_time():
     total_flops = 2*Ni*Nn*B # Add, multiply for problem size
     return total_flops/FP32_MAX
 
-def calculate_memory_time():
-    return 0
+#assume perfect reuse
+def DRAM_move_time():
+    total_bytes_move = data_size*( B*(Ni + Nn) + Ni*Nn)
+    return total_bytes_move/VRAM_BW
 
-def set_size(N_i, N_n, batch):
-    global Ni, Nn, B
+#assume perfect reuse
+def L2_move_time():
+    total_bytes_move = 3200*data_size*( B*(Ni + Nn) + Ni*Nn)
+    return total_bytes_move/L2_BW
+
+#assume perfect reuse
+def L1_move_time():
+    if(Blocks < SM_COUNT):
+        total_bytes_move = 3200*data_size*( B*(Ni + Nn) / Blocks + Ni*Nn )
+    else:
+        total_bytes_move = 3200*data_size*( B*(Ni + Nn) / SM_COUNT * math.ceil(Blocks / SM_COUNT) + Ni*Nn)
+    return total_bytes_move/L2_BW
+
+def effective_compute(op_intensity):
+    dram_compute = op_intensity
+    if (dram_compute < FP32_MAX):
+        FLOPS_EFF = dram_compute
+    else:
+        FLOPS_EFF = FP32_MAX
+
+
+
+def set_size(N_i, N_n, batch, block_num):
+    global Ni, Nn, B, Blocks
     Ni = N_i
     Nn = N_n
     B = batch
+    Blocks = block_num
 
 def main():
-    #Classifier Stuff
-    if(class):
-        #Parameter to be tweaked
-        Ni = 2 ** 10    #Input size
-        Nn = 2 ** 10    #Output size
+    #Parameters to be tweaked
+    Ni = 512   #Input size
+    Nn = 131072     #Output size
+    B = 256
+    Blocks = 2 ** 7 #2 ^ 7 = 128, optimal when testing large problem sizes
 
-        num_ops = Ni * Nn
+    set_size(Ni, Nn, B, Blocks)
+
+    times = [calculate_compute_time(), DRAM_move_time(), L2_move_time(), L1_move_time()]
+    time_label = ["compute time", "DRAM bandwidth", "L2 bandwidth", "L1 bandwidth"]
+
+    print("For the parameters: \nInput Size = %d \nOutput Size = %d \nBatch Size = %d \nBlock Number = %d" % (Ni, Nn, B, Blocks))
+    print("The execution time of the kernel and the limiting factor is:\n %f ms\t %s" % (max(times)*1000, time_label[times.index(max(times))]))
 
 
 if __name__ == "__main__":
