@@ -20,6 +20,11 @@ GPU_CLK_BOOST = 1455000000 # boost clock speed
 
 data_size = 4 # FP32, 32 bits, 8bits/byte
 
+L1_LATENCY = 28 # cycles, from microbenchmarking paper
+L2_LATENCY = 193 # cycles
+L1_LATENCY_TIME = L1_LATENCY/MEM_CLK
+L2_LATENCY_TIME = L2_LATENCY/MEM_CLK
+
 # assumes compute bound ONLY
 def calculate_compute_time():
     total_flops = 2*Ni*Nn*B # Add, multiply for problem size
@@ -27,31 +32,37 @@ def calculate_compute_time():
 
 #assume perfect reuse
 def DRAM_move_time():
-    total_bytes_move = data_size*( B*(Ni + Nn) + B*Ni*Nn)
+    #sqrt term accounts for when blocks are not full on threads, limiting their throughput
+    total_bytes_move = data_size*( B*(Ni + Nn) + B*Ni*Nn) * math.sqrt(1024 / (Nn / Blocks))
     return total_bytes_move/VRAM_BW
 
 #assume perfect reuse
 def L2_move_time():
     total_bytes_move = data_size*( B*(Ni + Nn) + B*Ni*Nn)
-    return total_bytes_move/L2_BW
+    num_hits = total_bytes_move/TOTAL_L2
+    latency_penalty = num_hits * L2_LATENCY_TIME
+    return total_bytes_move/L2_BW + latency_penalty
 
 #assume perfect reuse
 def L1_move_time():
     if(Blocks < SM_COUNT):
         total_bytes_move = data_size*( B*(Ni + Nn) / Blocks + B*Ni*Nn )
+        num_hits = total_bytes_move/TOTAL_L1
+        latency_penalty = num_hits * L1_LATENCY_TIME
     else:
         total_bytes_move = data_size*( B*(Ni + Nn) / SM_COUNT * math.ceil(Blocks / SM_COUNT) + B*Ni*Nn)
-    return total_bytes_move/L2_BW
+        num_hits = total_bytes_move/TOTAL_L1
+        latency_penalty = num_hits * L1_LATENCY_TIME
+    return total_bytes_move/L1_BW
 
 def effective_compute():
     op_intensity = 2*Ni*Nn*B/(data_size*( B*(Ni + Nn) + B*Ni*Nn))
-    print(op_intensity)
     dram_compute = op_intensity*VRAM_BW
     if (dram_compute < FP32_MAX):
         FLOPS_EFF = dram_compute
     else:
         FLOPS_EFF = FP32_MAX
-    print(FLOPS_EFF)
+    return FLOPS_EFF
 
 def set_size(N_i, N_n, batch, block_num):
     global Ni, Nn, B, Blocks
@@ -62,10 +73,11 @@ def set_size(N_i, N_n, batch, block_num):
 
 def main():
     #Parameters to be tweaked
-    Ni = 512   #Input size
+    Ni = 128   #Input size
     Nn = 131072     #Output size
     B = 256
     Blocks = 2 ** 7 #2 ^ 7 = 128, optimal when testing large problem sizes
+    op_intensity = 2*Ni*Nn*B/(data_size*( B*(Ni + Nn) + B*Ni*Nn))
 
     set_size(Ni, Nn, B, Blocks)
     effective_compute()
@@ -73,8 +85,16 @@ def main():
     time_label = ["compute time", "DRAM bandwidth", "L2 bandwidth", "L1 bandwidth"]
 
     print("For the parameters: \nInput Size = %d \nOutput Size = %d \nBatch Size = %d \nBlock Number = %d" % (Ni, Nn, B, Blocks))
+    print("Operational intensity (FLOPS/byte): " + str(op_intensity))
+    print("Possible compute-bound throughput: ", str(FP32_MAX/(10e12)), "TFLOPS")
+    print("Achieved throughput (memory or compute-bound): " + str(effective_compute()/10e12) + " TFLOPS")
     print("The execution time of the kernel and the limiting factor is:\n %f ms\t %s" % (max(times)*1000, time_label[times.index(max(times))]))
 
+    print("\n")
+    print("Estimated compute time (compute only): " + str(calculate_compute_time()*1000) + " ms")
+    print("Estimated DRAM data transfer time: " + str(DRAM_move_time()*1000) + " ms")
+    print("Estimated L2 cache data transfer time: " + str(L2_move_time()*1000) + " ms")
+    print("Estimated L1 cache data transfer time: " + str(L1_move_time()*1000) + " ms")
 
 if __name__ == "__main__":
     main()
