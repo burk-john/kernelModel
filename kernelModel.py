@@ -8,7 +8,7 @@ TOTAL_VRAM = 12884901888 # 12GB to bytes
 TOTAL_L2 = 4718592 # 4.5MB
 TOTAL_L1 = 98304 # 96KB
 
-VRAM_BW = 701153411072 # 653GB/s
+VRAM_BW = 10*701153411072 # 653GB/s
 L2_BW = 2155 * (2**30) # 2155GB/s. Slightly inaccurate, using V100 value
 L1_BW = 13800 * (2**30)
 
@@ -33,8 +33,13 @@ def calculate_compute_time():
 #assume perfect reuse
 def DRAM_move_time():
     #sqrt term accounts for when blocks are not full on threads, limiting their throughput
-    total_bytes_move = data_size*( B*(Ni + Nn) + B*Ni*Nn) * math.sqrt(1024 / (Nn / Blocks))
-    return total_bytes_move/VRAM_BW
+    total_bytes_move = data_size*( B*(Ni + Nn) + B*Ni*Nn)
+    thread_overhead = B * .0044 / 256
+    if(Nn < Blocks):
+        return thread_overhead
+    else:
+        #there is a scaling factor for the DRAM that was found experimentally
+        return thread_overhead + total_bytes_move/VRAM_BW * (15.3 - math.log(Nn / Blocks, 2) * 1.277)
 
 #assume perfect reuse
 def L2_move_time():
@@ -58,10 +63,9 @@ def L1_move_time():
 def effective_compute():
     op_intensity = 2*Ni*Nn*B/(data_size*( B*(Ni + Nn) + B*Ni*Nn))
     dram_compute = op_intensity*VRAM_BW
-    if (dram_compute < FP32_MAX):
-        FLOPS_EFF = dram_compute
-    else:
-        FLOPS_EFF = FP32_MAX
+    l2_compute = op_intensity*L2_BW
+    l1_compute = op_intensity*L1_BW
+    FLOPS_EFF = min(FP32_MAX, dram_compute, l2_compute, l1_compute)
     return FLOPS_EFF
 
 def set_size(N_i, N_n, batch, block_num):
@@ -73,7 +77,7 @@ def set_size(N_i, N_n, batch, block_num):
 
 def main():
     #Parameters to be tweaked
-    Ni = 128   #Input size
+    Ni = 512   #Input size
     Nn = 131072     #Output size
     B = 256
     Blocks = 2 ** 7 #2 ^ 7 = 128, optimal when testing large problem sizes
